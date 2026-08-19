@@ -320,8 +320,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   .phase-editor { border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; margin-bottom: 20px; }
   .phase-editor-row {
-    display: grid; grid-template-columns: 22px minmax(140px,1fr) 138px 138px 128px 150px; align-items: center; gap: 12px;
-    padding: 10px 14px; border-bottom: 1px solid var(--gridline); font-size: 13px; min-width: 860px;
+    display: grid; grid-template-columns: 22px minmax(140px,1fr) 138px 138px 128px 150px 130px; align-items: center; gap: 12px;
+    padding: 10px 14px; border-bottom: 1px solid var(--gridline); font-size: 13px; min-width: 990px;
   }
   .phase-editor-row:last-child { border-bottom: none; }
   .phase-editor-row.head { background: var(--page-plane); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-muted); font-weight: 600; padding-top: 8px; padding-bottom: 8px; }
@@ -334,6 +334,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   .duration-unit { font-size: 11px; color: var(--text-muted); margin-left: 4px; }
   .computed-range { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
   .status-select { width: 100%; border: 1px solid var(--border); background: var(--input-bg); color: var(--text-primary); border-radius: 6px; padding: 5px 6px; font-size: 12.5px; font-family: inherit; }
+  .owner-input { width: 118px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text-primary); border-radius: 6px; padding: 5px 6px; font-size: 12.5px; font-family: inherit; }
 
   .preview-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
   .mini-preview { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 22px; overflow-x: auto; }
@@ -416,6 +417,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <option value="status">Sortér: Status (forsinket først)</option>
         <option value="name-asc">Sortér: Kundenavn (A-Å)</option>
         <option value="name-desc">Sortér: Kundenavn (Å-A)</option>
+        <option value="owner-asc">Sortér: Ansvarlig (A-Å)</option>
       </select>
       <button type="button" class="delayed-chip" id="delayedChip">
         <span class="dot"></span><span id="delayedChipLabel">0 forsinkede faser</span>
@@ -448,6 +450,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <tr>
             <th>Kunde</th>
             <th>Fase</th>
+            <th>Ansvarlig</th>
             <th>Start</th>
             <th>Slut</th>
             <th>Varighed</th>
@@ -633,6 +636,7 @@ function dbRowToProject(row) {
     .map(ph => {
       const out = { phase: ph.phase_key, start: ph.start_date, end: fmtISO(exclusiveEnd(parseDate(ph.end_date))) };
       if (ph.status_key) out.status = ph.status_key;
+      if (ph.owner) out.owner = ph.owner;
       return out;
     });
   return { id: row.customer_id, customer: row.name, owner: row.owner || "", note: row.note || "", phases };
@@ -641,13 +645,13 @@ function dbRowToProject(row) {
 function phaseToDbRow(customerId, ph) {
   const endInclusive = parseDate(ph.end);
   endInclusive.setDate(endInclusive.getDate() - 1);
-  return { customer_id: customerId, phase_key: ph.phase, start_date: ph.start, end_date: fmtISO(endInclusive), status_key: ph.status || null };
+  return { customer_id: customerId, phase_key: ph.phase, start_date: ph.start, end_date: fmtISO(endInclusive), status_key: ph.status || null, owner: ph.owner || null };
 }
 
 async function loadProjectsFromDB() {
   const { data, error } = await sb
     .from("customers")
-    .select("customer_id,name,owner,note,project_phases(phase_key,start_date,end_date,status_key)")
+    .select("customer_id,name,owner,note,project_phases(phase_key,start_date,end_date,status_key,owner)")
     .order("customer_id", { ascending: true });
   if (error) throw error;
   return data.map(dbRowToProject);
@@ -748,13 +752,13 @@ function createScheduleState(startDateStr, durations, statuses) {
     const status = (statuses && statuses[p.key]) || "auto";
     if (!n || n <= 0) {
       const pt = new Date(cursor);
-      return { key: p.key, duration: 0, included: false, start: pt, end: pt, status };
+      return { key: p.key, duration: 0, included: false, start: pt, end: pt, status, owner: "" };
     }
     const start = new Date(cursor);
     const last = lastWorkingDay(cursor, n);
     const end = exclusiveEnd(last);
     cursor = nextWorkStart(last);
-    return { key: p.key, duration: n, included: true, start, end, status };
+    return { key: p.key, duration: n, included: true, start, end, status, owner: "" };
   });
 }
 
@@ -769,10 +773,10 @@ function scheduleStateFromProject(project) {
       const start = parseDate(found.start);
       const end = parseDate(found.end);
       cursor = new Date(end);
-      return { key: p.key, duration: businessDaysBetween(start, end), included: true, start, end, status: found.status || "auto" };
+      return { key: p.key, duration: businessDaysBetween(start, end), included: true, start, end, status: found.status || "auto", owner: found.owner || "" };
     }
     const pt = cursor ? new Date(cursor) : toWeekday(parseDate((project.phases[0] && project.phases[0].start) || fmtISO(today)));
-    return { key: p.key, duration: 0, included: false, start: pt, end: pt, status: "auto" };
+    return { key: p.key, duration: 0, included: false, start: pt, end: pt, status: "auto", owner: "" };
   });
 }
 
@@ -837,6 +841,7 @@ function scheduleToOutput(schedule) {
   return schedule.filter(ph => ph.included).map(ph => {
     const out = { phase: ph.key, start: fmtISO(ph.start), end: fmtISO(ph.end) };
     if (ph.status && ph.status !== "auto") out.status = ph.status;
+    if (ph.owner) out.owner = ph.owner;
     return out;
   });
 }
@@ -851,10 +856,10 @@ function buildPhaseEditor(container, schedule, onChange) {
   container.innerHTML = "";
   const headRow = document.createElement("div");
   headRow.className = "phase-editor-row head";
-  headRow.innerHTML = `<span></span><span>Fase</span><span>Start</span><span>Slut</span><span>Varighed</span><span>Status</span>`;
+  headRow.innerHTML = `<span></span><span>Fase</span><span>Start</span><span>Slut</span><span>Varighed</span><span>Status</span><span>Ansvarlig</span>`;
   container.appendChild(headRow);
 
-  const rows = {}, startInputs = {}, endInputs = {}, durationInputs = {}, statusSelects = {};
+  const rows = {}, startInputs = {}, endInputs = {}, durationInputs = {}, statusSelects = {}, ownerInputs = {};
   PHASES.forEach((p, idx) => {
     const row = document.createElement("div");
     row.className = "phase-editor-row";
@@ -866,6 +871,7 @@ function buildPhaseEditor(container, schedule, onChange) {
       <span><input type="date" class="date-input end-input" data-phase="${p.key}"></span>
       <span><input type="number" min="0" max="60" class="duration-input" data-phase="${p.key}"><span class="duration-unit">dage</span></span>
       <span><select class="status-select" data-phase="${p.key}">${statusOptionsHtml}</select></span>
+      <span><input type="text" class="owner-input" data-phase="${p.key}" placeholder="Navn"></span>
     `;
     container.appendChild(row);
     rows[p.key] = row;
@@ -873,6 +879,7 @@ function buildPhaseEditor(container, schedule, onChange) {
     endInputs[p.key] = row.querySelector(".end-input");
     durationInputs[p.key] = row.querySelector(".duration-input");
     statusSelects[p.key] = row.querySelector(".status-select");
+    ownerInputs[p.key] = row.querySelector(".owner-input");
 
     startInputs[p.key].addEventListener("change", () => {
       if (!startInputs[p.key].value) return;
@@ -893,6 +900,10 @@ function buildPhaseEditor(container, schedule, onChange) {
       schedule[idx].status = statusSelects[p.key].value || "auto";
       onChange();
     });
+    ownerInputs[p.key].addEventListener("input", () => {
+      schedule[idx].owner = ownerInputs[p.key].value.trim();
+      onChange();
+    });
   });
 
   function syncRows() {
@@ -905,11 +916,12 @@ function buildPhaseEditor(container, schedule, onChange) {
       endInputs[p.key].disabled = !ph.included;
       durationInputs[p.key].value = ph.duration;
       statusSelects[p.key].value = ph.status || "auto";
+      if (document.activeElement !== ownerInputs[p.key]) ownerInputs[p.key].value = ph.owner || "";
       rows[p.key].classList.toggle("dropped", !ph.included);
     });
   }
   syncRows();
-  return { schedule, syncRows, startInputs, endInputs, durationInputs, statusSelects };
+  return { schedule, syncRows, startInputs, endInputs, durationInputs, statusSelects, ownerInputs };
 }
 
 // ---- Beregn tidsintervallet, alle kunder skal vises indenfor ----
@@ -1044,6 +1056,15 @@ function countDelayedPhases() {
 
 // Sorterer en liste af projekter efter den aktuelle sortSelect-værdi (påvirker
 // ikke selve PROJECTS-arrayet, kun rækkefølgen i visningen).
+// Sammenligner to (evt. tomme) ansvarlig-navne — kunder/faser uden ansvarlig
+// havner sidst, ikke først, når der sorteres alfabetisk.
+function compareOwner(a, b) {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return a.localeCompare(b, "da");
+}
+
 function sortProjects(list) {
   const mode = sortSelect ? sortSelect.value : "default";
   const arr = list.slice();
@@ -1053,6 +1074,8 @@ function sortProjects(list) {
     arr.sort((a, b) => a.customer.localeCompare(b.customer, "da"));
   } else if (mode === "name-desc") {
     arr.sort((a, b) => b.customer.localeCompare(a.customer, "da"));
+  } else if (mode === "owner-asc") {
+    arr.sort((a, b) => compareOwner(a.owner, b.owner) || a.customer.localeCompare(b.customer, "da"));
   }
   return arr;
 }
@@ -1095,7 +1118,7 @@ function renderGantt(filterText) {
     const label = document.createElement("div");
     label.className = "week-label";
     label.style.left = xOf(w) + "px";
-    label.textContent = `Uge ${isoWeekNumber(w)}`;
+    label.textContent = w.toLocaleDateString("da-DK", { day: "numeric", month: "short" });
     headerTrack.appendChild(label);
   });
   if (today >= minDate && today <= maxDate) {
@@ -1179,7 +1202,8 @@ function renderGantt(filterText) {
       bar.addEventListener("mouseenter", (evt) => {
         const lastWork = new Date(e); lastWork.setDate(lastWork.getDate() - 1);
         const statusLine = (isDelayed(ph) ? "⚠ " : "") + phaseStatus(ph);
-        showTooltip(evt, `<strong>${escapeHtml(p.customer)} — ${def.label}</strong>${fmtDate(s)} – ${fmtDate(lastWork)}<br>${businessDaysBetween(s,e)} hverdage · ${statusLine}`);
+        const ownerLine = ph.owner ? `<br>Ansvarlig: ${escapeHtml(ph.owner)}` : "";
+        showTooltip(evt, `<strong>${escapeHtml(p.customer)} — ${def.label}</strong>${fmtDate(s)} – ${fmtDate(lastWork)}<br>${businessDaysBetween(s,e)} hverdage · ${statusLine}${ownerLine}`);
       });
       bar.addEventListener("mousemove", positionTooltip);
       bar.addEventListener("mouseleave", hideTooltip);
@@ -1215,6 +1239,10 @@ function renderTable(filterText) {
     rows.sort((a, b) => a.p.customer.localeCompare(b.p.customer, "da"));
   } else if (mode === "name-desc") {
     rows.sort((a, b) => b.p.customer.localeCompare(a.p.customer, "da"));
+  } else if (mode === "owner-asc") {
+    // Sorterer efter fasens egen ansvarlig; er den ikke sat, falder vi
+    // tilbage til kundens overordnede ansvarlig.
+    rows.sort((a, b) => compareOwner(a.ph.owner || a.p.owner, b.ph.owner || b.p.owner) || a.p.customer.localeCompare(b.p.customer, "da"));
   }
 
   rows.forEach(({ p, ph }) => {
@@ -1228,6 +1256,7 @@ function renderTable(filterText) {
     tr.innerHTML = `
       <td class="customer-cell">${escapeHtml(p.customer)}</td>
       <td><span class="phase-chip"><span class="dot" style="background:var(--${def.cls})"></span>${def.label}</span></td>
+      <td>${escapeHtml(ph.owner || "")}</td>
       <td>${fmtDate(s)}</td>
       <td>${fmtDate(lastWork)}</td>
       <td>${businessDaysBetween(s,e)} hverdage</td>
@@ -1238,7 +1267,7 @@ function renderTable(filterText) {
   });
   if (rows.length === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="6" class="empty-state">${showOnlyDelayed ? "Ingen forsinkede faser matcher din søgning." : "Ingen rækker matcher din søgning/filter."}</td>`;
+    tr.innerHTML = `<td colspan="7" class="empty-state">${showOnlyDelayed ? "Ingen forsinkede faser matcher din søgning." : "Ingen rækker matcher din søgning/filter."}</td>`;
     tableBody.appendChild(tr);
   }
 }
@@ -1337,8 +1366,8 @@ themeToggle.addEventListener("click", () => {
    Import gemmer direkte i databasen (opret/opdatér, se
    importFromExcel ovenfor). Én række pr. fase pr. kunde.
    ================================================================ */
-const EXCEL_HEADERS = ["Kunde", "Ansvarlig", "Note", "Fase", "Start", "Slut", "Status"];
-const EXCEL_HEADER_MAP = { kunde: "customer", ansvarlig: "owner", note: "note", fase: "phase", start: "start", slut: "end", status: "status" };
+const EXCEL_HEADERS = ["Kunde", "Ansvarlig", "Note", "Fase", "Fase-ansvarlig", "Start", "Slut", "Status"];
+const EXCEL_HEADER_MAP = { kunde: "customer", ansvarlig: "owner", note: "note", fase: "phase", "fase-ansvarlig": "phaseOwner", start: "start", slut: "end", status: "status" };
 
 function normText(s) { return String(s == null ? "" : s).trim().toLowerCase(); }
 
@@ -1446,9 +1475,11 @@ function parseExcelWorkbook(data) {
     const statusRaw = colIndex.status != null ? String(row[colIndex.status] ?? "").trim() : "";
     const statusKey = statusRaw ? STATUS_LABEL_TO_KEY[normText(statusRaw)] : null;
     if (statusRaw && !statusKey) warnings.push(`Række ${r + 1}: ukendt status "${statusRaw}" for "${customer}" — brugt "Automatisk" i stedet.`);
+    const phaseOwnerRaw = colIndex.phaseOwner != null ? String(row[colIndex.phaseOwner] ?? "").trim() : "";
 
     const phaseEntry = { phase: phaseKey, start: fmtISO(start), end: fmtISO(exclusiveEnd(endInclusive)) };
     if (statusKey && statusKey !== "auto") phaseEntry.status = statusKey;
+    if (phaseOwnerRaw) phaseEntry.owner = phaseOwnerRaw;
     proj.phases.push(phaseEntry);
     phaseCount++;
   }
@@ -1511,7 +1542,7 @@ function exportToExcel() {
   const rows = [EXCEL_HEADERS];
   PROJECTS.forEach(p => {
     if (!p.phases.length) {
-      rows.push([p.customer, p.owner || "", p.note || "", "", "", "", ""]);
+      rows.push([p.customer, p.owner || "", p.note || "", "", "", "", "", ""]);
       return;
     }
     p.phases.forEach(ph => {
@@ -1519,11 +1550,11 @@ function exportToExcel() {
       const endInclusive = parseDate(ph.end);
       endInclusive.setDate(endInclusive.getDate() - 1);
       const statusLabel = ph.status && STATUS_BY_KEY[ph.status] ? STATUS_BY_KEY[ph.status].label : "";
-      rows.push([p.customer, p.owner || "", p.note || "", def ? def.label : ph.phase, ph.start, fmtISO(endInclusive), statusLabel]);
+      rows.push([p.customer, p.owner || "", p.note || "", def ? def.label : ph.phase, ph.owner || "", ph.start, fmtISO(endInclusive), statusLabel]);
     });
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws["!cols"] = [{ wch: 24 }, { wch: 14 }, { wch: 32 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 26 }];
+  ws["!cols"] = [{ wch: 24 }, { wch: 14 }, { wch: 32 }, { wch: 24 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 26 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Kundeprojekter");
 
@@ -1533,6 +1564,7 @@ function exportToExcel() {
     ["Én række pr. fase pr. kunde. Tilføj en ny kunde ved at tilføje rækker med kundens navn i Kunde-kolonnen."],
     ["Drop en fase helt ved at slette dens række — den tæller så ikke med, og næste fase rykker op."],
     ["Ret en fases tid ved at ændre Start eller Slut. Slut er sidste arbejdsdag, inklusiv."],
+    ["Fase-ansvarlig er valgfri og angiver hvem der er ansvarlig for netop den fase — adskilt fra kundens overordnede Ansvarlig."],
     ["Importér denne fil i værktøjet (knappen \"Importér Excel\") for at gemme ændringerne i databasen."],
     ["Eksisterende kunder (matchet på navn) opdateres; nye kunder oprettes. Kunder, der ikke er i arket, røres ikke."],
     [""],
@@ -1592,7 +1624,8 @@ function projectCodeLines(customer, owner, note, output) {
   lines.push("    phases: [");
   output.forEach(ph => {
     const statusPart = ph.status ? `, status: "${ph.status}"` : "";
-    lines.push(`      { phase: "${ph.phase}", start: "${ph.start}", end: "${ph.end}"${statusPart} },`);
+    const ownerPart = ph.owner ? `, owner: "${ph.owner.replace(/"/g, '\\"')}"` : "";
+    lines.push(`      { phase: "${ph.phase}", start: "${ph.start}", end: "${ph.end}"${statusPart}${ownerPart} },`);
   });
   lines.push("    ],");
   lines.push("  },");
