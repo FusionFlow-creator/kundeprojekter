@@ -186,7 +186,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     font-size: 14px;
   }
   .search-box::placeholder { color: var(--text-muted); }
-  .sort-select {
+  .sort-select, .owner-filter {
     border: 1px solid var(--border); background: var(--card-bg); color: var(--text-primary);
     border-radius: 8px; padding: 8px 10px; font-size: 13px; font-family: inherit;
   }
@@ -375,7 +375,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   .modal-overlay.open { display: flex; align-items: flex-start; justify-content: center; }
   .modal-card {
     background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 24px;
-    max-width: 780px; width: 100%; box-shadow: 0 24px 60px rgba(0,0,0,0.35);
+    max-width: min(1060px, calc(100vw - 32px)); width: 100%; box-shadow: 0 24px 60px rgba(0,0,0,0.35);
   }
   .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
   .modal-header h2 { font-size: 17px; margin: 0; }
@@ -418,6 +418,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <option value="name-asc">Sortér: Kundenavn (A-Å)</option>
         <option value="name-desc">Sortér: Kundenavn (Å-A)</option>
         <option value="owner-asc">Sortér: Ansvarlig (A-Å)</option>
+      </select>
+      <select class="owner-filter" id="ownerFilterSelect" title="Filtrér efter ansvarlig">
+        <option value="">Alle ansvarlige</option>
       </select>
       <button type="button" class="delayed-chip" id="delayedChip">
         <span class="dot"></span><span id="delayedChipLabel">0 forsinkede faser</span>
@@ -701,6 +704,7 @@ async function loadAndRender() {
     PROJECTS.length = 0;
     PROJECTS.push(...projects);
     recomputeRange();
+    populateOwnerFilter();
     refresh();
     hideExcelStatus();
   } catch (err) {
@@ -1190,7 +1194,8 @@ function renderGantt(filterText) {
       if (!def) return;
       const left = xOf(s) + 1;
       const width = Math.max(6, xOf(e) - xOf(s) - 2);
-      const dimmed = (activePhases.size > 0 && !activePhases.has(ph.phase)) || (showOnlyDelayed && !isDelayed(ph));
+      const dimmed = (activePhases.size > 0 && !activePhases.has(ph.phase)) || (showOnlyDelayed && !isDelayed(ph)) ||
+        (selectedOwnerFilter && (ph.owner || p.owner) !== selectedOwnerFilter);
       const bar = document.createElement("div");
       bar.className = "bar " + def.cls + (dimmed ? " dimmed" : "") + (isDelayed(ph) ? " bar-delayed" : "");
       bar.style.left = left + "px";
@@ -1228,6 +1233,7 @@ function renderTable(filterText) {
     p.phases.forEach(ph => {
       if (activePhases.size > 0 && !activePhases.has(ph.phase)) return;
       if (showOnlyDelayed && !isDelayed(ph)) return;
+      if (selectedOwnerFilter && (ph.owner || p.owner) !== selectedOwnerFilter) return;
       rows.push({ p, ph });
     });
   });
@@ -1275,6 +1281,7 @@ function renderTable(filterText) {
 // ---- Toolbar-interaktion ----
 const searchBox = document.getElementById("searchBox");
 const sortSelect = document.getElementById("sortSelect");
+const ownerFilterSelect = document.getElementById("ownerFilterSelect");
 const delayedChip = document.getElementById("delayedChip");
 const delayedChipLabel = document.getElementById("delayedChipLabel");
 const resultCount = document.getElementById("resultCount");
@@ -1286,6 +1293,38 @@ const tableCard = document.getElementById("tableCard");
 const createCard = document.getElementById("createCard");
 
 let showOnlyDelayed = false;
+let selectedOwnerFilter = "";
+
+// Alle ansvarlige, der reelt bruges lige nu — både kundens overordnede
+// ansvarlig og fasernes egne — til "Filtrér efter ansvarlig"-dropdownen.
+function getDistinctOwners() {
+  const set = new Set();
+  PROJECTS.forEach(p => {
+    if (p.owner) set.add(p.owner);
+    p.phases.forEach(ph => { if (ph.owner) set.add(ph.owner); });
+  });
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "da"));
+}
+
+// Genopbygger listen af ansvarlige i filter-dropdownen ud fra de faktiske
+// data (kaldes efter hver indlæsning fra databasen). Bevarer det valgte
+// filter, hvis personen stadig findes — nulstiller ellers til "Alle".
+function populateOwnerFilter() {
+  const current = ownerFilterSelect.value;
+  const owners = getDistinctOwners();
+  ownerFilterSelect.innerHTML = '<option value="">Alle ansvarlige</option>' +
+    owners.map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("");
+  if (owners.includes(current)) {
+    ownerFilterSelect.value = current;
+  } else {
+    ownerFilterSelect.value = "";
+    selectedOwnerFilter = "";
+  }
+}
+ownerFilterSelect.addEventListener("change", () => {
+  selectedOwnerFilter = ownerFilterSelect.value;
+  refresh();
+});
 
 // Slet-knap med "klik igen for at bekræfte" — bruges både i Gantt-rækker og modalen.
 // Sletter kunden (og dens faser, via ON DELETE CASCADE) permanent i databasen.
